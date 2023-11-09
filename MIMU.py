@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torchattacks as ta
 
-
+# MIM un-targeted
 class MIMU(ta.Attack):
     def __init__(self, model, eps=8 / 255, alpha=2 / 255, steps=10, decay=1.0):
         super().__init__("MIMU", model)

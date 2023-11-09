@@ -5,7 +5,7 @@ import numpy as np
 from utils import *
 
 
-class LID(ta.Attack):
+class FIA(ta.Attack):
     def __init__(self, model, layer_name, ag=True,gn=False,ug=False, **kwargs):
         super().__init__("MIMU", model)
         self.eps = 16/255
