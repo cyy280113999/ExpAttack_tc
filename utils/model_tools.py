@@ -1,18 +1,26 @@
 import torchvision as tv
 from torchvision.models import VGG, AlexNet, ResNet, GoogLeNet, VisionTransformer
-
+import timm
 device = 'cuda'
 INTPUT_LAYER = 'input_layer'
 available_models = {
     "vgg16": lambda: preprocessModel(tv.models.vgg16(weights=tv.models.VGG16_Weights.DEFAULT)),
-    "alexnet": lambda: preprocessModel(tv.models.alexnet(weights=tv.models.AlexNet_Weights.DEFAULT)),
+    "vgg19": lambda: preprocessModel(tv.models.vgg19(weights=tv.models.VGG19_Weights.DEFAULT)),
+    # "alexnet": lambda: preprocessModel(tv.models.alexnet(weights=tv.models.AlexNet_Weights.DEFAULT)),
     "resnet18": lambda: preprocessModel(tv.models.resnet18(weights=tv.models.ResNet18_Weights.DEFAULT)),
     "resnet34": lambda: preprocessModel(tv.models.resnet34(weights=tv.models.ResNet34_Weights.DEFAULT)),
     "resnet50": lambda: preprocessModel(tv.models.resnet50(weights=tv.models.ResNet50_Weights.DEFAULT)),
     "resnet101": lambda: preprocessModel(tv.models.resnet101(weights=tv.models.ResNet101_Weights.DEFAULT)),
     "resnet152": lambda: preprocessModel(tv.models.resnet152(weights=tv.models.ResNet152_Weights.DEFAULT)),
     "googlenet": lambda: preprocessModel(tv.models.googlenet(weights=tv.models.GoogLeNet_Weights.DEFAULT)),
-    "vit": lambda: preprocessModel(tv.models.vit_b_16(weights=tv.models.ViT_B_16_Weights.DEFAULT)),
+    # "vit": lambda: preprocessModel(tv.models.vit_b_16(weights=tv.models.ViT_B_16_Weights.DEFAULT)),
+    "densenet121": lambda: preprocessModel(tv.models.densenet121(weights=tv.models.DenseNet121_Weights.DEFAULT)),
+    "inception3": lambda: preprocessModel(timm.models.create_model('inception_v3',pretrained=True)),
+    "inception4": lambda: preprocessModel(timm.models.create_model('inception_v4', pretrained=True)),
+    "convnext": lambda: preprocessModel(timm.models.create_model('convnext_tiny', pretrained=True)),
+    "vit": lambda: preprocessModel(timm.models.create_model('vit_base_patch16_224', pretrained=True)),
+    "deit": lambda: preprocessModel(timm.models.create_model('deit_base_patch16_224', pretrained=True)),
+    "swin": lambda: preprocessModel(timm.models.create_model('swin_base_patch4_window7_224', pretrained=True)),
 }
 
 
@@ -55,7 +63,7 @@ def decode_stages(model, stages=(0, 1, 2, 3, 4, 5)):
     if not isinstance(stages, (list, tuple)):
         stages = (stages,)
     if isinstance(model, VGG):
-        layer_names = ['input_layer'] + [('features', i) for i in (4, 9, 16, 23, 29)]
+        layer_names = ['input_layer'] + [('features', i) for i in (4, 9, 16, 23, 30)]
     elif isinstance(model, ResNet):
         layer_names = ['input_layer', 'maxpool'] + [(f'layer{i}', -1) for i in (1, 2, 3, 4)]
     elif isinstance(model, GoogLeNet):
@@ -73,6 +81,8 @@ def decode_stages(model, stages=(0, 1, 2, 3, 4, 5)):
 def findLayerByName(model, layer_name=(None,)):
     if not isinstance(layer_name, (tuple, list)):
         layer_name = (layer_name,)
+    if layer_name[0] == INTPUT_LAYER:
+        return model  # model itself
     layer = model
     for l in layer_name:
         if isinstance(l, int):  # for sequential

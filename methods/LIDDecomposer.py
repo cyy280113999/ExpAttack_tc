@@ -17,11 +17,11 @@ from utils import *
 
 ABBREV = False
 
-
+# kwargs: x0="std0", BP="normal", LIN=0, DEFAULT_STEP=11, LAE=0, CAE=0, AMP=0, DF=0, GIP=0
 def LID_wrapper(model, layer_names, **kwargs):  # class-like
     method = LIDDecomposer(model, **kwargs)
-    def data_caller(x, y, **kwargs):  # a heatmap method
-        method(x, y, **kwargs)
+    def data_caller(x, y):  # a heatmap method
+        method(x, y)
         hm = multi_interpolate(relevanceFindByName(model, layer_name) for layer_name in layer_names)
         return hm
     return data_caller
@@ -31,8 +31,8 @@ def LID_wrapper(model, layer_names, **kwargs):  # class-like
 # and multi-layer mixed heatmap
 def LID_m_caller(model, x, y, x0='std0',
                  s=(0, 1, 2, 3, 4, 5), lin=False, bp='sig', le=0, ce=0, smg=0):
-    d = LIDDecomposer(model, LIN=lin, LAE=le, CAE=ce, GIP=smg)
-    d(x, y, x0, bp)
+    d = LIDDecomposer(model, x0=x0, BP=bp, LIN=lin, LAE=le, CAE=ce, GIP=smg)
+    d(x, y)
     hm = multi_interpolate(relevanceFindByName(model, layername)
                            for layername in decode_stages(model, s))
     return hm
@@ -143,6 +143,7 @@ BaseUnits = (
     torch.nn.Softmax,
 )
 
+# these modules working non-linear as same as the linear
 LinearUnits = (
     torch.nn.Conv2d,
     torch.nn.BatchNorm2d,
@@ -191,53 +192,46 @@ def downSampleFix(g):
 
 
 class LIDDecomposer:
-    def forward_save(self, m, x):
-        m.x = x
-        m.y = m(x)
-        return m.y
-
     def forward_baseunit(self, m, x):
-        if not isinstance(m, BaseUnits):
-            raise Exception(f'layer:{m} is not a supported base layer')
         if isinstance(m, torch.nn.ReLU):
             m.inplace = False
         elif isinstance(m, torch.nn.Dropout):
             return x
-        return self.forward_save(m, x)
+        y = m(x)
+        m.x = x
+        m.y = y
+        return y
 
     def backward_linearunit(self, m, g):
+        x = m.x[None, 1].detach().requires_grad_()  # new graph
+        if self.LinearActivationEnhance != 0 and isinstance(m, torch.nn.Linear):
+            m = linearEnhance(m, self.LinearActivationEnhance)
+        if self.ConvActivationEnhance != 0 and isinstance(m, torch.nn.Conv2d):
+            m = linearEnhance(m, self.ConvActivationEnhance)
         with torch.enable_grad():
-            x = m.x[None, 1].detach().requires_grad_()  # new graph
-            layer = m
-            if self.LinearActivationEnhance != 0 and isinstance(m, torch.nn.Linear):
-                layer = linearEnhance(m, self.LinearActivationEnhance)
-            if self.ConvActivationEnhance != 0 and isinstance(m, torch.nn.Conv2d):
-                layer = linearEnhance(m, self.ConvActivationEnhance)
-            y = layer(x)
+            y = m(x)
             (y * g).sum().backward()
-            g = x.grad
+        g = x.grad
         return g
 
     def backward_nonlinearunit(self, m, g):
-        m.g = g.detach()
         step = self.DEFAULT_STEP
         xs = torch.zeros((step,) + m.x.shape[1:], device=m.x.device)
         xs[0] = m.x[0]
         Dx = m.x.diff(dim=0)
-        std = Dx.std()
         dx = Dx / (step - 1)
+        std = Dx.std()
         for i in range(1, step):
             xs[i] = xs[i - 1] + dx
         if self.GaussianIntegralPath:
             xs += self.GaussianIntegralPath * std * torch.randn_like(xs)
+        if self.AverageMaxPool and isinstance(m, torch.nn.MaxPool2d):
+            m = torch.nn.AvgPool2d(m.kernel_size, m.stride, m.padding, ceil_mode=m.ceil_mode)
+        xs = xs.detach().requires_grad_()
         with torch.enable_grad():
-            xs = xs.detach().requires_grad_()
-            layer = m
-            if self.AverageMaxPool and isinstance(m, torch.nn.MaxPool2d):
-                layer = torch.nn.AvgPool2d(m.kernel_size, m.stride, m.padding, ceil_mode=m.ceil_mode)
-            ys = layer(xs)
+            ys = m(xs)
             (ys * g).sum().backward()
-            g = xs.grad.mean(0, True).detach()
+        g = xs.grad.mean(0, True).detach()
         return g
 
     def backward_baseunit(self, m, g):
@@ -247,12 +241,10 @@ class LIDDecomposer:
             return g.reshape((1,) + m.x.shape[1:])
         elif isinstance(m, torch.nn.Dropout):
             return g
-        elif self.LinearDecomposing or isinstance(m, LinearUnits):  # does nonlinear module need linear approximation
+        elif self.LinearDecomposing or isinstance(m, LinearUnits):  # nonlinear module using linear approximation
             g = self.backward_linearunit(m, g)
-        elif isinstance(m, BaseUnits):  # nonlinear
+        else:  # nonlinear
             g = self.backward_nonlinearunit(m, g)
-        else:
-            raise Exception()
         return g
 
     def forward_vgg(self, x):
@@ -274,95 +266,95 @@ class LIDDecomposer:
             g = self.backward_baseunit(m, g)
         return g
 
-    def forward_BasicBlock(self, m, x):
-        return self.forward_save(m, x)
     # def forward_BasicBlock(self, m, x):
-    #     identity = x
-    #     x = self.forward_baseunit(m.conv1, x)
-    #     x = self.forward_baseunit(m.bn1, x)
-    #     x = self.forward_baseunit(m.relu, x)
-    #     x = self.forward_baseunit(m.conv2, x)
-    #     x = self.forward_baseunit(m.bn2, x)
-    #     if m.downsample is not None:
-    #         for m2 in m.downsample:
-    #             identity = self.forward_baseunit(m2, identity)
-    #     x += identity
-    #     m.relu2 = torch.nn.ReLU(False)
-    #     x = self.forward_baseunit(m.relu2, x)
-    #     m.y = x
-    #     return x
-
-    def backward_BasicBlock(self, m, g):
-        return self.backward_nonlinearunit(m, g)
+    #     return self.forward_save(m, x)
+    def forward_BasicBlock(self, m, x):
+        identity = x
+        x = self.forward_baseunit(m.conv1, x)
+        x = self.forward_baseunit(m.bn1, x)
+        x = self.forward_baseunit(m.relu, x)
+        x = self.forward_baseunit(m.conv2, x)
+        x = self.forward_baseunit(m.bn2, x)
+        if m.downsample is not None:
+            for m2 in m.downsample:
+                identity = self.forward_baseunit(m2, identity)
+        x += identity
+        m.relu2 = torch.nn.ReLU(False)
+        x = self.forward_baseunit(m.relu2, x)
+        m.y = x
+        return x
 
     # def backward_BasicBlock(self, m, g):
-    #     m.g = g  # save for block relevance
-    #     g = self.backward_baseunit(m.relu2, g)
-    #     out_g = g
-    #     if m.downsample is not None:
-    #         for m2 in m.downsample[::-1]:
-    #             out_g = self.backward_baseunit(m2, out_g)
-    #         if self.ResNetDownSampleFix:
-    #             out_g = downSampleFix(out_g)
-    #     g = self.backward_baseunit(m.bn2, g)
-    #     g = self.backward_baseunit(m.conv2, g)
-    #     g = self.backward_baseunit(m.relu, g)
-    #     g = self.backward_baseunit(m.bn1, g)
-    #     g = self.backward_baseunit(m.conv1, g)
-    #     g += out_g
-    #     return g
+    #     return self.backward_nonlinearunit(m, g)
 
-    def forward_Bottleneck(self, m, x, abbrev=ABBREV):
-        return self.forward_save(m, x)
+    def backward_BasicBlock(self, m, g):
+        m.g = g  # save for block relevance
+        g = self.backward_baseunit(m.relu2, g)
+        out_g = g
+        if m.downsample is not None:
+            for m2 in m.downsample[::-1]:
+                out_g = self.backward_baseunit(m2, out_g)
+            if self.ResNetDownSampleFix:
+                out_g = downSampleFix(out_g)
+        g = self.backward_baseunit(m.bn2, g)
+        g = self.backward_baseunit(m.conv2, g)
+        g = self.backward_baseunit(m.relu, g)
+        g = self.backward_baseunit(m.bn1, g)
+        g = self.backward_baseunit(m.conv1, g)
+        g += out_g
+        return g
 
     # def forward_Bottleneck(self, m, x, abbrev=ABBREV):
-    #     if abbrev:
-    #         m.x = x
-    #         x = m(x)
-    #     else:
-    #         identity = x
-    #         x = self.forward_baseunit(m.conv1, x)
-    #         x = self.forward_baseunit(m.bn1, x)
-    #         x = self.forward_baseunit(m.relu, x)
-    #         x = self.forward_baseunit(m.conv2, x)
-    #         x = self.forward_baseunit(m.bn2, x)
-    #         m.relu2 = torch.nn.ReLU(False)
-    #         x = self.forward_baseunit(m.relu2, x)
-    #         x = self.forward_baseunit(m.conv3, x)
-    #         x = self.forward_baseunit(m.bn3, x)
-    #         if m.downsample is not None:
-    #             for sub_m in m.downsample:
-    #                 identity = self.forward_baseunit(sub_m, identity)
-    #         x += identity
-    #         m.relu3 = torch.nn.ReLU(False)
-    #         x = self.forward_baseunit(m.relu3, x)
-    #     m.y = x
-    #     return x
-    def backward_Bottleneck(self, m, g, abbrev=ABBREV):
-        return self.backward_nonlinearunit(m, g)
+    #     return self.forward_save(m, x)
 
+    def forward_Bottleneck(self, m, x, abbrev=ABBREV):
+        if abbrev:
+            m.x = x
+            x = m(x)
+        else:
+            identity = x
+            x = self.forward_baseunit(m.conv1, x)
+            x = self.forward_baseunit(m.bn1, x)
+            x = self.forward_baseunit(m.relu, x)
+            x = self.forward_baseunit(m.conv2, x)
+            x = self.forward_baseunit(m.bn2, x)
+            m.relu2 = torch.nn.ReLU(False)
+            x = self.forward_baseunit(m.relu2, x)
+            x = self.forward_baseunit(m.conv3, x)
+            x = self.forward_baseunit(m.bn3, x)
+            if m.downsample is not None:
+                for sub_m in m.downsample:
+                    identity = self.forward_baseunit(sub_m, identity)
+            x += identity
+            m.relu3 = torch.nn.ReLU(False)
+            x = self.forward_baseunit(m.relu3, x)
+        m.y = x
+        return x
     # def backward_Bottleneck(self, m, g, abbrev=ABBREV):
-    #     m.g = g
-    #     if abbrev:
-    #         g = self.backward_nonlinearunit(m, g)
-    #     else:
-    #         g = self.backward_baseunit(m.relu3, g)
-    #         out_g = g
-    #         if m.downsample is not None:
-    #             for sub_m in m.downsample[::-1]:
-    #                 out_g = self.backward_baseunit(sub_m, out_g)
-    #             if self.ResNetDownSampleFix:
-    #                 out_g = downSampleFix(out_g)
-    #         g = self.backward_baseunit(m.bn3, g)
-    #         g = self.backward_baseunit(m.conv3, g)
-    #         g = self.backward_baseunit(m.relu2, g)
-    #         g = self.backward_baseunit(m.bn2, g)
-    #         g = self.backward_baseunit(m.conv2, g)
-    #         g = self.backward_baseunit(m.relu, g)
-    #         g = self.backward_baseunit(m.bn1, g)
-    #         g = self.backward_baseunit(m.conv1, g)
-    #         g += out_g
-    #     return g
+    #     return self.backward_nonlinearunit(m, g)
+
+    def backward_Bottleneck(self, m, g, abbrev=ABBREV):
+        m.g = g
+        if abbrev:
+            g = self.backward_nonlinearunit(m, g)
+        else:
+            g = self.backward_baseunit(m.relu3, g)
+            out_g = g
+            if m.downsample is not None:
+                for sub_m in m.downsample[::-1]:
+                    out_g = self.backward_baseunit(sub_m, out_g)
+                if self.ResNetDownSampleFix:
+                    out_g = downSampleFix(out_g)
+            g = self.backward_baseunit(m.bn3, g)
+            g = self.backward_baseunit(m.conv3, g)
+            g = self.backward_baseunit(m.relu2, g)
+            g = self.backward_baseunit(m.bn2, g)
+            g = self.backward_baseunit(m.conv2, g)
+            g = self.backward_baseunit(m.relu, g)
+            g = self.backward_baseunit(m.bn1, g)
+            g = self.backward_baseunit(m.conv1, g)
+            g += out_g
+        return g
 
     def forward_resnet(self, x):
         x = self.forward_baseunit(self.model.conv1, x)
@@ -518,13 +510,13 @@ class LIDDecomposer:
 
     def forward_encoder_block(self, m, x):
         tmp = x
-        x = self.forward_save(m.ln_1, x)
+        x = self.forward_baseunit(m.ln_1, x)
         m.SA = self.VITSA(m.self_attention)
-        x = self.forward_save(m.SA, x)
+        x = self.forward_baseunit(m.SA, x)
         x = x + tmp
         tmp = x
-        x = self.forward_save(m.ln_2, x)
-        x = self.forward_save(m.mlp, x)
+        x = self.forward_baseunit(m.ln_2, x)
+        x = self.forward_baseunit(m.mlp, x)
         x = x + tmp
         m.y = x[:, 1:].clone().permute(0, 2, 1).reshape(2, -1, 14, 14)  # modified as heatmap
         return x
@@ -584,7 +576,9 @@ class LIDDecomposer:
         g = self.backward_baseunit(self.model.conv_proj, g)
         return g
 
-    def __init__(self, model, LIN=0, DEFAULT_STEP=11, LAE=0, CAE=0, AMP=0, DF=1, GIP=0, **kwargs):
+    def __init__(self, model, x0="std0", BP="normal", LIN=0, DEFAULT_STEP=11, LAE=0, CAE=0, AMP=0, DF=0, GIP=0, **kwargs):
+        self.x0=x0
+        self.backward_init=BP
         self.LinearDecomposing = LIN  # set to nonlinear decomposition
         self.DEFAULT_STEP = DEFAULT_STEP  # step of nonlinear integral approximation
         self.GaussianIntegralPath = GIP
@@ -608,8 +602,9 @@ class LIDDecomposer:
             raise Exception(f'{model.__class__} is not available model type')
         self.model = model.cuda()
 
-    def forward(self, x, x0="std0"):
+    def forward(self, x):
         # as to increment decomposition, we forward a batch of two inputs
+        x0=self.x0
         with torch.no_grad():
             if x0 is None or x0 == "zero" or x0 == "0" or x0 == 0:
                 x0 = torch.zeros_like(x)
@@ -633,10 +628,11 @@ class LIDDecomposer:
             self.y = self.forward_model(self.x)
         return self.y
 
-    def backward(self, yc, backward_init="normal"):
+    def backward(self, yc):
         """
         note that relevance = grad * Delta_x
         """
+        backward_init=self.backward_init
         with torch.no_grad():
             if isinstance(yc, int):
                 yc = torch.tensor([yc], device=self.y.device)
@@ -666,13 +662,13 @@ class LIDDecomposer:
             else:
                 raise Exception(f'{backward_init} is not available backward init.')
             self.g = self.backward_model(dody)
-            self.model.gx = self.g
+            self.model.g = self.g
             self.Rx = self.x.diff(dim=0) * self.g
         return self.g, self.Rx
 
-    def __call__(self, x, yc, x0="std0", bp="normal", **kwargs):
-        self.forward(x, x0)
-        self.backward(yc, bp)
+    def __call__(self, x, yc):
+        self.forward(x)
+        self.backward(yc)
         return self.g, self.Rx
 
 
