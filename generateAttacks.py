@@ -1,12 +1,8 @@
-import os
+from functools import partial
 
-import torch
-from PIL import Image
-import torchattacks as ta
-from NAA import NAA
 from utils import *
-from MIMU import MIMU
-from FIA import FIA
+from AttackMethods import *
+
 pj = os.path.join
 
 
@@ -19,11 +15,11 @@ class FIA_Dataset:
     """
 
     def __init__(self, ds_dir='./dataset'):
-        with open(pj(ds_dir, 'labels.txt')) as f:
-            self.labels = [int(s) - 1 for s in f.read().split('\n')[:-1]]  # change the start point from 1 to 0
         self.ds_dir = ds_dir
         self.image_names = os.listdir(pj(ds_dir, 'images'))
-        self.image_names.sort(key=lambda s: int(s[:-4]))
+        self.image_names.sort(key=lambda s: int(s[:-4]))  # images inorder
+        with open(pj(ds_dir, 'labels.txt')) as f:
+            self.labels = [int(s) - 1 for s in f.read().split('\n')[:-1]]  # change the start point from 1 to 0
 
     def __getitem__(self, i):
         img = pilOpen(pj(self.ds_dir, 'images', self.image_names[i]))
@@ -35,28 +31,24 @@ class FIA_Dataset:
         return 1000
 
 
+# generate all adversal samples of the specific method
 def generate(method, dataset, save_dir):
-    for i in tqdm(range(len(dataset))):
+    for i in tqdm(range(len(dataset)), desc=save_dir):
         file_name, x, y = dataset[i]
-        x = toStd(x).unsqueeze(0).cuda()
+        x = x.unsqueeze(0).cuda()
         y = torch.LongTensor([y]).cuda()
         adv = method(x, y)
         # adv = method(*preprocess(x, y))
-        adv = toPlot(invStd(adv.cpu()))
+        adv = toPlot(adv.cpu())
         save_image(adv, file_name, save_dir)
 
 
+# show top10 predictions to check the success of attacking
 def showTop10(model, x):
     y = model(x)
     indices = y.argsort(dim=1, descending=True)[0, :10].cpu().numpy()
     for i in indices:
         print(i, y[0, i].item())
-
-
-def preprocess(x, y):
-    x = toStd(x)
-    x = x.cuda()
-    return x, y
 
 
 def save_image(image, name, output_dir):
@@ -66,61 +58,103 @@ def save_image(image, name, output_dir):
     img.save(pj(output_dir, name))
 
 
-def ta_wrp(ta_cls, **kwargs):
-    def class_wrapper(model):
-        atk = ta_cls(model, **kwargs)  # predefine
-        atk.set_normalization_used(ImgntMean, ImgntStd)
+def eval_all():
+    ds = FIA_Dataset()
+    model_name = 'vgg16'
+    default_params = {'eps': 8 / 255,
+                      'layer_names': (('features', 16),),
+                      'activation_class': Diff_Activation,
+                      'updater_class': M11_S,
+                      }
+    # all the experiments
+    exps = {
+        # 'FIACE_vgg_m3': (WA, {
+        #     'weight_class': partial(FIAWeight, mode='CE'),
+        # }),
+        # -- variant
+        # 'FIACEUW_vgg_m3': (WA,{
+        #     'weight_function': FIA_AggragatedGradient(mode='CE'),
+        #     'update_weight': True,
+        # }),
 
-        def method(x, y):
-            return atk(x, y)
+        # NAA
+        # 'NAACE_vgg_m3': (WA, {
+        #     'weight_class': partial(NAAWeight, mode='CE'),
+        # }),
 
-        return method
+        # 'NAACEUW_vgg_m3': (WA, {
+        #     'weight_function': NAA_IntegratedGradient(mode='CE'),
+        #     'update_weight': True,
+        # }),
+        'NAAC0_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=0),
+        }),
+        'NAAC5_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=5),
+        }),
+        'NAAC10_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=10),
+        }),
+        'NAAC15_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=15),
+        }),
+        'NAAC20_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=20),
+        }),
+        'NAAC25_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=25),
+        }),
+        'NAAC30_vgg_m3': (WA, {
+            'weight_class': partial(NAAWeight, mode='CE', weight_center=30),
+        }),
+        # LID
+        # 'LIDTT_vgg_m3': (WA, {
+        #     'weight_function': LID_Gradient(BP='normal', LIN=1),
+        # }),
+        # 'LIDIIUW_vgg_m3': (WA, {
+        #     'weight_function': LID_Gradient(BP='sig',LIN=0),
+        #     'update_weight': True,
+        # }),
+        # 'LIDITUW_vgg_m3': (WA, {
+        #     'weight_function': LID_Gradient(BP='sig', LIN=1),
+        #     'update_weight': True,
+        # }),
+        # 'LIDTIUW_vgg_m3': (WA, {
+        #     'weight_function': LID_Gradient(BP='st', LIN=0),
+        #     'update_weight': True,
+        # }),
+        # 'LIDIIUW_S20_vgg_m3': (WA, {
+        #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=21),
+        #     'update_weight': True,
+        # }),
+        # 'LIDIIUW_S30_vgg_m3': (WA,{
+        #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=31),
+        #     'update_weight': True,
+        # }),
+        # 'LIDII_FGSM_vgg_m3': (WA,{
+        #     'steps':1,  # FGSM
+        #     'weight_function': LID_Gradient(BP='sig', LIN=0),
+        # }),
+        # 'LIDII_GIPS30_vgg_m3': (WA,{
+        #     'weight_function': LID_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
+        # }),
+        # 'LIDIG_S30_vgg_m3': (WA,{
+        #     'weight_function': LIDIG_Gradient(BP='sig', LIN=0, DEFAULT_STEP=31),
+        # }),
+        # 'LIDIG_GIPS30_vgg_m3': (WA, {
+        #     'weight_function': LIDIG_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
+        # }),
+    }
+    print(exps.keys())
+    for method_name in exps:
+        params = default_params.copy()
+        method_class, params_2 = exps[method_name]
+        model = get_model(model_name)
+        params.update(params_2)
+        method = method_class(model, **params)
+        save_dir = f'adv_e8/{method_name}'
+        generate(method, ds, save_dir)
 
-    return class_wrapper
-
-
-exps = {
-    'FGSM_vgg': (ta.FGSM, 'vgg16', {'eps': 16 / 255}),
-
-    # 'PGD': ta_wrp(ta.PGD, **{
-    #     'eps': 16 / 255,
-    #     'alpha': 1.6 / 255,
-    #     'steps': 10,
-    #     'random_start': False,
-    # }),
-    # 'MIM': ta_wrp(ta.MIFGSM, **{
-    #     'eps': 16 / 255,
-    #     'alpha': 1.6 / 255,
-    #     'steps': 10,
-    # }),
-    # 'MIMU': ta_wrp(MIMU, **{
-    #     'eps': 16 / 255,
-    #     'alpha': 1.6 / 255,
-    #     'steps': 10,
-    # }),
-    # 'FIA': ta_wrp(FIA, **{
-    #     'layer_name': (('features',16),),
-    # }),
-    'FIA_vgg_c2': (FIA, 'vgg16', {'layer_name': (('features', 8),)}),
-    'FIA_vgg_m2': (FIA, 'vgg16', {'layer_name': (('features', 9),)}),
-    'FIA_vgg_c3': (FIA, 'vgg16', {'layer_name': (('features', 15),)}),  # conv33
-    'FIA_vgg_m3': (FIA, 'vgg16', {'layer_name': (('features', 16),)}),  # maxpool3
-    'FIA_vgg_c4': (FIA, 'vgg16', {'layer_name': (('features', 22),)}),
-    'FIA_vgg_m4': (FIA, 'vgg16', {'layer_name': (('features', 23),)}),
-    'NAA_vgg_c2': (NAA, 'vgg16', {'layer_name': (('features', 8),)}),
-    'NAA_vgg_m2': (NAA, 'vgg16', {'layer_name': (('features', 9),)}),
-    'NAA_vgg_c3': (NAA, 'vgg16', {'layer_name': (('features', 15),)}),  # conv33
-    'NAA_vgg_m3': (NAA, 'vgg16', {'layer_name': (('features', 16),)}),  # maxpool3
-    'NAA_vgg_c4': (NAA, 'vgg16', {'layer_name': (('features', 22),)}),
-    'NAA_vgg_m4': (NAA, 'vgg16', {'layer_name': (('features', 23),)}),
-}
 
 if __name__ == '__main__':
-    method_name='FIA_vgg_m4'
-    method_class,model_name,params=exps[method_name]
-    ds = FIA_Dataset()
-    model = get_model(model_name)
-    method = method_class(model, **params)
-    method.set_normalization_used(ImgntMean, ImgntStd)
-    save_dir = f'./adv/tc_{method_name}'
-    generate(method, ds, save_dir)
+    eval_all()
