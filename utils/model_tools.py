@@ -1,24 +1,32 @@
+import time
+
 import torchvision as tv
 from torchvision.models import VGG, AlexNet, ResNet, GoogLeNet, VisionTransformer
+# 设置timm代理，或者在系统--环境变量里设置也是一样的
+# os.environ['HTTP_PROXY'] = 'http://127.0.0.1:47890'
+# os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:47890'
 import timm
+
 device = 'cuda'
 INTPUT_LAYER = 'input_layer'
 available_models = {
     "vgg16": lambda: preprocessModel(tv.models.vgg16(weights=tv.models.VGG16_Weights.DEFAULT)),
-    "vgg19": lambda: preprocessModel(tv.models.vgg19(weights=tv.models.VGG19_Weights.DEFAULT)),
+    # "vgg19": lambda: preprocessModel(tv.models.vgg19(weights=tv.models.VGG19_Weights.DEFAULT)),
+    "vgg19": lambda: preprocessModel(timm.models.create_model('vgg19', pretrained=True)),
     # "alexnet": lambda: preprocessModel(tv.models.alexnet(weights=tv.models.AlexNet_Weights.DEFAULT)),
-    "resnet18": lambda: preprocessModel(tv.models.resnet18(weights=tv.models.ResNet18_Weights.DEFAULT)),
-    "resnet34": lambda: preprocessModel(tv.models.resnet34(weights=tv.models.ResNet34_Weights.DEFAULT)),
-    "resnet50": lambda: preprocessModel(tv.models.resnet50(weights=tv.models.ResNet50_Weights.DEFAULT)),
-    "resnet101": lambda: preprocessModel(tv.models.resnet101(weights=tv.models.ResNet101_Weights.DEFAULT)),
-    "resnet152": lambda: preprocessModel(tv.models.resnet152(weights=tv.models.ResNet152_Weights.DEFAULT)),
-    "googlenet": lambda: preprocessModel(tv.models.googlenet(weights=tv.models.GoogLeNet_Weights.DEFAULT)),
-    # "vit": lambda: preprocessModel(tv.models.vit_b_16(weights=tv.models.ViT_B_16_Weights.DEFAULT)),
-    "densenet121": lambda: preprocessModel(tv.models.densenet121(weights=tv.models.DenseNet121_Weights.DEFAULT)),
-    "inception3": lambda: preprocessModel(timm.models.create_model('inception_v3',pretrained=True)),
-    "inception4": lambda: preprocessModel(timm.models.create_model('inception_v4', pretrained=True)),
+    "res18": lambda: preprocessModel(tv.models.resnet18(weights=tv.models.ResNet18_Weights.DEFAULT)),
+    "res34": lambda: preprocessModel(tv.models.resnet34(weights=tv.models.ResNet34_Weights.DEFAULT)),
+    "res50": lambda: preprocessModel(tv.models.resnet50(weights=tv.models.ResNet50_Weights.DEFAULT)),
+    "res101": lambda: preprocessModel(tv.models.resnet101(weights=tv.models.ResNet101_Weights.DEFAULT)),
+    "res152": lambda: preprocessModel(tv.models.resnet152(weights=tv.models.ResNet152_Weights.DEFAULT)),
+    "inc1": lambda: preprocessModel(tv.models.googlenet(weights=tv.models.GoogLeNet_Weights.DEFAULT)),
+    "dense121": lambda: preprocessModel(tv.models.densenet121(weights=tv.models.DenseNet121_Weights.DEFAULT)),
+    "inc3": lambda: preprocessModel(timm.models.create_model('inception_v3',pretrained=True)),
+    "inc4": lambda: preprocessModel(timm.models.create_model('inception_v4', pretrained=True)),
+    "incres2": lambda: preprocessModel(timm.models.create_model('inception_resnet_v2', pretrained=True)),
     "convnext": lambda: preprocessModel(timm.models.create_model('convnext_tiny', pretrained=True)),
-    "vit": lambda: preprocessModel(timm.models.create_model('vit_base_patch16_224', pretrained=True)),
+    "vit": lambda: preprocessModel(tv.models.vit_b_16(weights=tv.models.ViT_B_16_Weights.DEFAULT)),
+    # "vit": lambda: preprocessModel(timm.models.create_model('vit_base_patch16_224', pretrained=True)),
     "deit": lambda: preprocessModel(timm.models.create_model('deit_base_patch16_224', pretrained=True)),
     "swin": lambda: preprocessModel(timm.models.create_model('swin_base_patch4_window7_224', pretrained=True)),
 }
@@ -31,8 +39,25 @@ def preprocessModel(model):
     return model
 
 
-def get_model(name='vgg16'):
-    model = available_models[name]()
+def get_model(name='vgg16', auto_retry=True):
+    retry = True
+    model=None
+    while retry:
+        try:
+            model = available_models[name]()
+        except Exception as e:
+            print(f'load model {name} failed, because ', e)
+        if model is None:
+            if auto_retry:
+                time.sleep(3)
+            else:
+                ans = input(f'retry(y/n)?')
+                if ans.lower() == 'f':
+                    retry=False
+        else:
+            retry = False
+    if model is None:
+        raise Exception()
     return model
 
 

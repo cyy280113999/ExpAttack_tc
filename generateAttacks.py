@@ -1,7 +1,7 @@
 from functools import partial
 
 from utils import *
-from AttackMethods import *
+from WAMethods import *
 
 pj = os.path.join
 
@@ -32,15 +32,14 @@ class FIA_Dataset:
 
 
 # generate all adversal samples of the specific method
-def generate(method, dataset, save_dir):
+def generate(method, dataset, save_dir, noise_mode=False):
     for i in tqdm(range(len(dataset)), desc=save_dir):
         file_name, x, y = dataset[i]
         x = x.unsqueeze(0).cuda()
         y = torch.LongTensor([y]).cuda()
-        adv = method(x, y)
-        # adv = method(*preprocess(x, y))
-        adv = toPlot(adv.cpu())
-        save_image(adv, file_name, save_dir)
+        noise = method(x, y)
+        adv = (x + noise).clip(min=0, max=1).cpu()
+        save_image(adv, pj(save_dir, file_name))
 
 
 # show top10 predictions to check the success of attacking
@@ -57,104 +56,142 @@ def save_image(image, name, output_dir):
     img = Image.fromarray((image * 255).astype('uint8'))
     img.save(pj(output_dir, name))
 
+# def eval_all():
+#     ds = FIA_Dataset()
+#     model_name = 'vgg16'
+#     default_params = {'eps': 8 / 255,
+#                       'layer_names': (('features', 16),),
+#                       'activation_class': Diff_Activation,
+#                       'updater_class': M11_S,
+#                       }
+#     # all the experiments
+#     exps = {
+#         'FIACE_vgg_m3': {
+#             'weight_class': partial(FIAWeight, mode='CE'),
+#         },
+#         # -- variant
+#         # 'FIACEUW_vgg_m3': (WA,{
+#         #     'weight_function': FIA_AggragatedGradient(mode='CE'),
+#         #     'update_weight': True,
+#         # }),
+#
+#         # NAA
+#         # 'NAACE_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE'),
+#         # }),
+#
+#         # 'NAACEUW_vgg_m3': (WA, {
+#         #     'weight_function': NAA_IntegratedGradient(mode='CE'),
+#         #     'update_weight': True,
+#         # }),
+#         # 'NAAC0_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=0),
+#         # }),
+#         # 'NAAC5_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=5),
+#         # }),
+#         # 'NAAC10_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=10),
+#         # }),
+#         # 'NAAC15_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=15),
+#         # }),
+#         # 'NAAC20_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=20),
+#         # }),
+#         # 'NAAC25_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=25),
+#         # }),
+#         # 'NAAC30_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAWeight, mode='CE', weight_center=30),
+#         # }),
+#         # LID
+#         # 'LIDTT_vgg_m3': (WA, {
+#         #     'weight_function': LID_Gradient(BP='normal', LIN=1),
+#         # }),
+#         # 'LIDIIUW_vgg_m3': (WA, {
+#         #     'weight_function': LID_Gradient(BP='sig',LIN=0),
+#         #     'update_weight': True,
+#         # }),
+#         # 'LIDITUW_vgg_m3': (WA, {
+#         #     'weight_function': LID_Gradient(BP='sig', LIN=1),
+#         #     'update_weight': True,
+#         # }),
+#         # 'LIDTIUW_vgg_m3': (WA, {
+#         #     'weight_function': LID_Gradient(BP='st', LIN=0),
+#         #     'update_weight': True,
+#         # }),
+#         # 'LIDIIUW_S20_vgg_m3': (WA, {
+#         #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=21),
+#         #     'update_weight': True,
+#         # }),
+#         # 'LIDIIUW_S30_vgg_m3': (WA,{
+#         #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=31),
+#         #     'update_weight': True,
+#         # }),
+#         # 'LIDII_FGSM_vgg_m3': (WA,{
+#         #     'steps':1,  # FGSM
+#         #     'weight_function': LID_Gradient(BP='sig', LIN=0),
+#         # }),
+#         # 'LIDII_GIPS30_vgg_m3': (WA,{
+#         #     'weight_function': LID_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
+#         # }),
+#         # 'LIDIG_GIPS30_vgg_m3': (WA, {
+#         #     'weight_function': LIDIG_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
+#         # }),
+#         # 'MM55_vgg_m3': (WA, {
+#         #     'weight_class': partial(MidMomentumWeight, mode='CE', decay=0.5, keep=0.5),
+#         # }),
+#         # 'MM91_vgg_m3': (WA, {
+#         #     'weight_class': partial(MidMomentumWeight, mode='CE', decay=0.9, keep=0.1),
+#         # }),
+#         # 'MM10_vgg_m3': (WA, {
+#         #     'weight_class': partial(MidMomentumWeight, mode='CE', decay=1, keep=0),
+#         # }),
+#         # 'FIAM55_vgg_m3': (WA, {
+#         #     'weight_class': partial(FIAMWeight, mode='CE', decay=0.5, keep=0.5),
+#         # }),
+#         # 'FIAM91_vgg_m3': (WA, {
+#         #     'weight_class': partial(FIAMWeight, mode='CE', decay=0.9, keep=0.1),
+#         # }),
+#         # 'FIAM10_vgg_m3': (WA, {
+#         #     'weight_class': partial(FIAMWeight, mode='CE', decay=1, keep=0),
+#         # }),
+#         # 'NAAM55_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAMWeight, mode='CE', decay=0.5, keep=0.5),
+#         # }),
+#         # 'NAAM91_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAMWeight, mode='CE', decay=0.9, keep=0.1),
+#         # }),
+#         # 'NAAM10_vgg_m3': (WA, {
+#         #     'weight_class': partial(NAAMWeight, mode='CE', decay=1, keep=0),
+#         # }),
+#         # 'LIDIGF0_vgg_m3': (WA, {
+#         #     'weight_class': partial(LIDIGWeight,BP='sig', LIN=0, FracLevel=0),
+#         # }),
+#         # 'LIDIGF1_vgg_m3': (WA, {
+#         #     'weight_class': partial(LIDIGWeight,BP='sig', LIN=0, FracLevel=1),
+#         # }),
+#         # 'LIDIGF2_vgg_m3': (WA, {
+#         #     'weight_class': partial(LIDIGWeight,BP='sig', LIN=0, FracLevel=2),
+#         # }),
+#         # 'LIDIGF3_vgg_m3': (WA, {
+#         #     'weight_class': partial(LIDIGWeight,BP='sig', LIN=0, FracLevel=3),
+#         # }),
+#         # 'LIDIGF4_vgg_m3': (WA, {
+#         #     'weight_class': partial(LIDIGWeight,BP='sig', LIN=0, FracLevel=4),
+#         # }),
+#     }
+#     print(exps.keys())
+#     for method_name in exps:
+#         params = default_params.copy()
+#         params_appendix = exps[method_name]
+#         model = get_model(model_name)
+#         params.update(params_appendix)
+#         method = WA(model, **params)
+#         save_dir = f'adv_e8/{method_name}'
+#         generate(method, ds, save_dir)
 
-def eval_all():
-    ds = FIA_Dataset()
-    model_name = 'vgg16'
-    default_params = {'eps': 8 / 255,
-                      'layer_names': (('features', 16),),
-                      'activation_class': Diff_Activation,
-                      'updater_class': M11_S,
-                      }
-    # all the experiments
-    exps = {
-        # 'FIACE_vgg_m3': (WA, {
-        #     'weight_class': partial(FIAWeight, mode='CE'),
-        # }),
-        # -- variant
-        # 'FIACEUW_vgg_m3': (WA,{
-        #     'weight_function': FIA_AggragatedGradient(mode='CE'),
-        #     'update_weight': True,
-        # }),
 
-        # NAA
-        # 'NAACE_vgg_m3': (WA, {
-        #     'weight_class': partial(NAAWeight, mode='CE'),
-        # }),
-
-        # 'NAACEUW_vgg_m3': (WA, {
-        #     'weight_function': NAA_IntegratedGradient(mode='CE'),
-        #     'update_weight': True,
-        # }),
-        'NAAC0_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=0),
-        }),
-        'NAAC5_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=5),
-        }),
-        'NAAC10_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=10),
-        }),
-        'NAAC15_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=15),
-        }),
-        'NAAC20_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=20),
-        }),
-        'NAAC25_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=25),
-        }),
-        'NAAC30_vgg_m3': (WA, {
-            'weight_class': partial(NAAWeight, mode='CE', weight_center=30),
-        }),
-        # LID
-        # 'LIDTT_vgg_m3': (WA, {
-        #     'weight_function': LID_Gradient(BP='normal', LIN=1),
-        # }),
-        # 'LIDIIUW_vgg_m3': (WA, {
-        #     'weight_function': LID_Gradient(BP='sig',LIN=0),
-        #     'update_weight': True,
-        # }),
-        # 'LIDITUW_vgg_m3': (WA, {
-        #     'weight_function': LID_Gradient(BP='sig', LIN=1),
-        #     'update_weight': True,
-        # }),
-        # 'LIDTIUW_vgg_m3': (WA, {
-        #     'weight_function': LID_Gradient(BP='st', LIN=0),
-        #     'update_weight': True,
-        # }),
-        # 'LIDIIUW_S20_vgg_m3': (WA, {
-        #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=21),
-        #     'update_weight': True,
-        # }),
-        # 'LIDIIUW_S30_vgg_m3': (WA,{
-        #     'weight_function': LID_Gradient(BP='sig', LIN=0,DEFAULT_STEP=31),
-        #     'update_weight': True,
-        # }),
-        # 'LIDII_FGSM_vgg_m3': (WA,{
-        #     'steps':1,  # FGSM
-        #     'weight_function': LID_Gradient(BP='sig', LIN=0),
-        # }),
-        # 'LIDII_GIPS30_vgg_m3': (WA,{
-        #     'weight_function': LID_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
-        # }),
-        # 'LIDIG_S30_vgg_m3': (WA,{
-        #     'weight_function': LIDIG_Gradient(BP='sig', LIN=0, DEFAULT_STEP=31),
-        # }),
-        # 'LIDIG_GIPS30_vgg_m3': (WA, {
-        #     'weight_function': LIDIG_Gradient(BP='sig', LIN=0, GIP=0.3, DEFAULT_STEP=31),
-        # }),
-    }
-    print(exps.keys())
-    for method_name in exps:
-        params = default_params.copy()
-        method_class, params_2 = exps[method_name]
-        model = get_model(model_name)
-        params.update(params_2)
-        method = method_class(model, **params)
-        save_dir = f'adv_e8/{method_name}'
-        generate(method, ds, save_dir)
-
-
-if __name__ == '__main__':
-    eval_all()
+# if __name__ == '__main__':
+#     eval_all()
